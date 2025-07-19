@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BubbleCash Pro - Auto Game</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(to bottom, #2c3e50, #3498db);
+            color: white;
+            text-align: center;
+            padding: 20px;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #ecf0f1;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        #gameArea {
+            margin: 20px auto;
+            width: 320px;
+            height: 450px;
+            border: 5px solid #ecf0f1;
+            border-radius: 20px;
+            background: rgba(0, 0, 0, 0.2);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+        .bubble {
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            position: absolute;
+            box-shadow: inset 0 0 10px rgba(255,255,255,0.5);
+            will-change: transform; /* Performance improvement */
+        }
+        button {
+            padding: 12px 25px;
+            margin: 15px 10px;
+            font-size: 16px;
+            border: none;
+            border-radius: 10px;
+            background: #e74c3c;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        button:hover:not(:disabled) {
+            background: #c0392b;
+            transform: translateY(-2px);
+        }
+        button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        #connectBtn {
+            background: #2980b9;
+        }
+        #connectBtn:hover:not(:disabled) {
+            background: #3498db;
+        }
+        #walletInfo {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #bdc3c7;
+            background: rgba(0,0,0,0.2);
+            padding: 8px 15px;
+            border-radius: 8px;
+            min-height: 24px;
+        }
+        #stats {
+            font-size: 18px;
+            margin-top: 10px;
+            color: #ecf0f1;
+            background: rgba(0,0,0,0.25);
+            padding: 10px 20px;
+            border-radius: 10px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <h1>BubbleCash Pro</h1>
+    
+    <button id="connectBtn" onclick="connectWallet()">Connect Wallet</button>
+    <p id="walletInfo">Wallet not connected</p>
+    
+    <div id="stats">
+        Coins: <span id="coinCount">0</span> | BUSD: <span id="busdValue">0.00</span>
+    </div>
+    
+    <div id="gameArea"></div>
+    
+    <button id="withdrawBtn" onclick="withdraw()" disabled>Withdraw BUSD</button>
+
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.8.2/dist/web3.min.js"></script>
+
+    <script>
+        // Aap ka Contract Address aur ABI yahan daal diye gaye hain
+        const contractAddress = "0xd9145CCE52D386f254917e481eB44e9943F39138";
+        const contractABI = [ { "inputs": [ { "internalType": "address", "name": "_busdTokenAddress", "type": "address" } ], "stateMutability": "nonpayable", "type": "constructor" }, { "inputs": [ { "internalType": "address", "name": "_to", "type": "address" }, { "internalType": "uint256", "name": "_amount", "type": "uint256" } ], "name": "withdraw", "outputs": [], "stateMutability": "nonpayable", "type": "function" }, { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "to", "type": "address" }, { "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" } ], "name": "Withdrawn", "type": "event" }, { "inputs": [], "name": "busdToken", "outputs": [ { "internalType": "contract IBEP20", "name": "", "type": "address" } ], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "owner", "outputs": [ { "internalType": "address", "name": "", "type": "address" } ], "stateMutability": "view", "type": "function" } ];
+
+        // Game State
+        let provider;
+        let web3;
+        let account;
+        let coins = 0;
+        const coinToBusdRate = 1000;
+        let bubbles = [];
+        const bubbleColors = [
+            'radial-gradient(circle, #ff7e5f, #feb47b)', 'radial-gradient(circle, #a8ff78, #78ffd6)',
+            'radial-gradient(circle, #f857a6, #ff5858)', 'radial-gradient(circle, #e0c3fc, #8ec5fc)',
+            'radial-gradient(circle, #f093fb, #f5576c)', 'radial-gradient(circle, #4facfe, #00f2fe)'
+        ];
+
+        // DOM Elements
+        const walletInfoEl = document.getElementById('walletInfo');
+        const coinCountEl = document.getElementById('coinCount');
+        const busdValueEl = document.getElementById('busdValue');
+        const withdrawBtnEl = document.getElementById('withdrawBtn');
+        const gameAreaEl = document.getElementById('gameArea');
+        const connectBtnEl = document.getElementById('connectBtn');
+
+        // Initialize
+        window.onload = function() {
+            if (window.ethereum && window.ethereum.selectedAddress) {
+                connectWallet();
+            }
+            initializeGame();
+        };
+        
+        // --- Wallet Connection ---
+        async function connectWallet() {
+            if (window.ethereum) {
+                try {
+                    provider = window.ethereum;
+                    const accounts = await provider.request({ method: 'eth_requestAccounts' });
+                    account = accounts[0];
+                    web3 = new Web3(provider);
+                    await switchToBSC();
+                    setupListeners();
+                    updateWalletInfo();
+                    connectBtnEl.innerText = 'Connected';
+                    connectBtnEl.disabled = true;
+                } catch (error) {
+                    console.error("User denied account access or error occurred:", error);
+                    walletInfoEl.innerText = "Connection failed. Please try again.";
+                }
+            } else {
+                alert("Non-Ethereum browser detected. Please use MetaMask or Trust Wallet's DApp browser!");
+            }
+        }
+
+        function setupListeners() {
+            provider.on('accountsChanged', (accounts) => {
+                account = accounts[0] || null;
+                updateWalletInfo();
+                if(!account) window.location.reload();
+            });
+            provider.on('chainChanged', () => window.location.reload());
+        }
+        
+        async function switchToBSC() {
+            const chainId = await web3.eth.getChainId();
+            if (chainId !== 56) {
+                try {
+                    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x38' }] });
+                } catch (switchError) {
+                    if (switchError.code === 4902) {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [{
+                                chainId: '0x38',
+                                chainName: 'Binance Smart Chain',
+                                rpcUrls: ['https://bsc-dataseed.binance.org/'],
+                                nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+                                blockExplorerUrls: ['https://bscscan.com']
+                            }]
+                        });
+                    }
+                }
+            }
+        }
+
+        function updateWalletInfo() {
+            if (account) {
+                walletInfoEl.innerHTML = `Connected: ${account.substring(0, 6)}...${account.substring(38)}`;
+            } else {
+                walletInfoEl.innerText = "Wallet not connected";
+                connectBtnEl.innerText = 'Connect Wallet';
+                connectBtnEl.disabled = false;
+            }
+        }
+
+        // --- Game Logic ---
+        function initializeGame() {
+            for (let i = 0; i < 7; i++) { createBubble(); }
+            animate();
+        }
+        
+        function createBubble() {
+            const bubble = { element: document.createElement('div'), radius: 17.5 };
+            bubble.element.className = 'bubble';
+            bubble.x = Math.random() * (gameAreaEl.clientWidth - bubble.radius * 2) + bubble.radius;
+            bubble.y = Math.random() * (gameAreaEl.clientHeight - bubble.radius * 2) + bubble.radius;
+            bubble.dx = (Math.random() - 0.5) * 2;
+            bubble.dy = (Math.random() - 0.5) * 2;
+            bubble.element.style.background = bubbleColors[Math.floor(Math.random() * bubbleColors.length)];
+            gameAreaEl.appendChild(bubble.element);
+            bubbles.push(bubble);
+        }
+
+        function animate() {
+            bubbles.forEach((bubble, index) => {
+                bubble.x += bubble.dx;
+                bubble.y += bubble.dy;
+                if (bubble.x + bubble.radius > gameAreaEl.clientWidth || bubble.x - bubble.radius < 0) bubble.dx *= -1;
+                if (bubble.y + bubble.radius > gameAreaEl.clientHeight || bubble.y - bubble.radius < 0) bubble.dy *= -1;
+                for (let j = index + 1; j < bubbles.length; j++) {
+                    const otherBubble = bubbles[j];
+                    const dist = Math.hypot(bubble.x - otherBubble.x, bubble.y - otherBubble.y);
+                    if (dist < bubble.radius + otherBubble.radius) {
+                        coins += 100;
+                        updateCoinDisplay();
+                        bubble.element.remove();
+                        otherBubble.element.remove();
+                        bubbles.splice(j, 1);
+                        bubbles.splice(index, 1);
+                        createBubble();
+                        createBubble();
+                        return;
+                    }
+                }
+                bubble.element.style.transform = `translate(${bubble.x - bubble.radius}px, ${bubble.y - bubble.radius}px)`;
+            });
+            requestAnimationFrame(animate);
+        }
+        
+        function updateCoinDisplay() {
+            coinCountEl.innerText = coins;
+            busdValueEl.innerText = (coins / coinToBusdRate).toFixed(3);
+            withdrawBtnEl.disabled = coins < coinToBusdRate;
+        }
+
+        // --- Smart Contract Interaction ---
+        async function withdraw() {
+            if (!account) { alert("Please connect your wallet first."); return; }
+            if (coins < coinToBusdRate) { alert("You don't have enough coins to withdraw."); return; }
+            const bubbleCashContract = new web3.eth.Contract(contractABI, contractAddress);
+            const amountToWithdraw = (coins / coinToBusdRate);
+            const amountInWei = web3.utils.toWei(amountToWithdraw.toString(), 'ether');
+            withdrawBtnEl.disabled = true;
+            withdrawBtnEl.innerText = "Processing...";
+            try {
+                const tx = await bubbleCashContract.methods.withdraw(account, amountInWei).send({ from: account });
+                alert(`Withdrawal successful! You can check the transaction on BscScan.`);
+                coins = 0;
+                updateCoinDisplay();
+            } catch (error) {
+                console.error("Withdrawal failed:", error);
+                alert(`Withdrawal failed. See console for details or check your wallet for the error message.`);
+            } finally {
+                withdrawBtnEl.disabled = coins < coinToBusdRate;
+                withdrawBtnEl.innerText = "Withdraw BUSD";
+            }
+        }
+    </script>
+</body>
+</html>
